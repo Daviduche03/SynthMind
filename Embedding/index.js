@@ -1,7 +1,7 @@
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { Document } from "@langchain/core/documents";
 
-import { CustomVectorStore } from "./MongoBase.js";
+import { CustomVectorStore } from "./mongo/MongoBase.js";
 import mongoose from "mongoose";
 
 import dotenv from 'dotenv';
@@ -73,30 +73,33 @@ dotenv.config();
 
 // MongoDB connection URL and database name
 
-const ul = process.env.MONGODB_URI;
+const dbUri = process.env.MONGODB_URI;
 
-const url = ul;
 // Embeddings interface
 const embeddings = new OpenAIEmbeddings({
-    openAIApiKey: process.env.OPENAI_API_KEY,
-  });
-  
+  openAIApiKey: process.env.OPENAI_API_KEY,
+});
+
   // Example texts and metadatas
   const texts = [
     "Mitochondria is the powerhouse of the cell",
     "Buildings are made of brick",
+    "my name is david",
+    "the dog is hungry",
   ];
   const metadatas = [{ id: 1 }, { id: 2 }];
   
   (async () => {
     // Create an instance of CustomVectorStore and add documents
-    const vectorstore = await CustomVectorStore.fromTexts(texts, metadatas, embeddings, url);
+    const vectorstore = new CustomVectorStore(embeddings, {}, dbUri);
   
     // Perform a similarity search
-    const query = "powerhouse";
+    const query = "What is the power of the cell?";
     const queryVector = await vectorstore.getQueryVector(query);
+
+    // const q = await embeddings.embedQuery(query);
   
-    const results = await vectorstore.similaritySearchVectorWithScore(queryVector, 1);
+    const results = await vectorstore.similaritySearchVectorWithScore(queryVector, 2);
   
     console.log(results);
   })();

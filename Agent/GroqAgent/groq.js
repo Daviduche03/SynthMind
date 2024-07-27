@@ -3,8 +3,8 @@ import { Groq } from "groq-sdk";
 
 
 class GroqAgent extends BaseAgent {
-  constructor({ systemMessage, tools, apiKey }) {
-    super(systemMessage, tools);
+  constructor({ systemMessage, tools, apiKey, memory, callback }) {
+    super(systemMessage, tools, memory, callback);
     this.agent_tools = tools;
     this.groq = new Groq({ apiKey: apiKey });
   }
@@ -26,7 +26,7 @@ class GroqAgent extends BaseAgent {
     }
     this.messages.push({ role: 'user', content: userMessage });
     const response = await this.groq.chat.completions.create({
-      model: "llama3-70b-8192",
+      model: "llama3-groq-70b-8192-tool-use-preview",
       messages: this.messages,
       tools: tools,
       tool_choice: "auto",

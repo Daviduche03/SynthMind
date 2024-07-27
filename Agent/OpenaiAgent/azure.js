@@ -5,13 +5,11 @@ import AgentMemory from "../memory/memory.js";
 
 
 
-class OpenAIAgent extends BaseAgent {
-    constructor({ systemMessage, tools, apiKey, memory }) {
+class AzureOpenAIAgent extends BaseAgent {
+    constructor({ systemMessage, tools, apiKey, endpoint, apiVersion, deployment, memory }) {
         super(systemMessage, tools, memory);
         this.agent_tools = tools;
-        this.openai = new OpenAI({
-            apiKey: apiKey,
-        });
+        this.openai = new AzureOpenAI({ endpoint, apiKey, apiVersion, deployment });
         this.memory = memory;
 
 
@@ -45,7 +43,7 @@ class OpenAIAgent extends BaseAgent {
         this.messages.push(responseMessage);
 
         if (responseMessage.tool_calls) {
-            console.log(responseMessage.tool_calls);
+            // console.log(responseMessage.tool_calls);
 
             if (responseMessage.tool_calls.some((tool) => tool.function.name === 'human')) {
 
@@ -69,6 +67,7 @@ class OpenAIAgent extends BaseAgent {
     }
 }
 
-export default OpenAIAgent
+export default AzureOpenAIAgent
+
 
 

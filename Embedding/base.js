@@ -1,40 +1,74 @@
+import mongoose from 'mongoose';
 import { VectorStore } from "@langchain/core/vectorstores";
 import { Document } from "@langchain/core/documents";
 import { similarity as ml_distance_similarity } from "ml-distance";
 
-class CustomVectorStore extends VectorStore {
-  constructor(embeddings, fields = {}) {
-    super(embeddings, fields);
-    this.memoryVectors = [];
-  }
+// Define a Mongoose schema for storing embeddings
+const embeddingSchema = new mongoose.Schema({
+  content: { type: String, unique: true },
+  embedding: [Number],
+  metadata: mongoose.Schema.Types.Mixed,
+});
 
+const EmbeddingModel = mongoose.model('Embedding', embeddingSchema);
+
+class CustomVectorStore extends VectorStore {
+  constructor(embeddings, fields = {}, useDatabase = false, dbUri) {
+    super(embeddings, fields);
+    this.useDatabase = useDatabase;
+    this.dbUri = dbUri;
+
+    if (this.useDatabase) {
+      this.connectToDatabase();
+    } else {
+      this.memoryVectors = [];
+    }
+  }
+  
   _vectorstoreType() {
     return "custom";
   }
 
-  
+  connectToDatabase() {
+    mongoose.connect(this.dbUri);
+  }
 
-  /**
-   * Adds documents to the vector store by embedding their content.
-   * @param {Document[]} documents - An array of Document objects to be added.
-   */
   async addDocuments(documents) {
-    console.log(this.memoryVectors);
-    const texts = documents.map(({ pageContent }) => pageContent);
-    try {
-      const embeddings = await this.embeddings.embedDocuments(texts);
-      await this.addVectors(embeddings, documents);
-    } catch (error) {
-      console.error("Error embedding documents:", error);
+    if (this.useDatabase) {
+      await this.addDocumentsToDatabase(documents);
+    } else {
+      await this.addDocumentsToMemory(documents);
     }
   }
 
-  /**
-   * Adds vectors and corresponding documents to the in-memory storage.
-   * @param {number[][]} vectors - An array of vectors (embeddings).
-   * @param {Document[]} documents - An array of Document objects corresponding to the vectors.
-   */
-  async addVectors(vectors, documents) {
+  async addDocumentsToMemory(documents) {
+    const texts = documents.map(({ pageContent }) => pageContent);
+    const newEmbeddings = await this.embeddings.embedDocuments(texts);
+    await this.addVectorsToMemory(newEmbeddings, documents);
+  }
+
+  async addDocumentsToDatabase(documents) {
+    try {
+      const embeddings = await this.embeddings.embedDocuments(documents.map(({ pageContent }) => pageContent));
+      const embeddingDocuments = embeddings.map((embedding, idx) => ({
+        content: documents[idx].pageContent,
+        embedding,
+        metadata: documents[idx].metadata,
+      }));
+
+      // Insert new embeddings into the database
+      try {
+        await EmbeddingModel.insertMany(embeddingDocuments, { ordered: false });
+        console.log('Documents added to the database successfully.');
+      } catch (error) {
+        console.error("Error adding vectors to the database:", error.message);
+      }
+    } catch (error) {
+      console.error("Error fetching existing embeddings:", error.message);
+    }
+  }
+
+  async addVectorsToMemory(vectors, documents) {
     const memoryVectors = vectors.map((embedding, idx) => ({
       content: documents[idx].pageContent,
       embedding,
@@ -43,52 +77,66 @@ class CustomVectorStore extends VectorStore {
     this.memoryVectors = this.memoryVectors.concat(memoryVectors);
   }
 
-  /**
-   * Performs a similarity search with the given query vector and returns the top k results.
-   * @param {number[]} query - A vector representing the query.
-   * @param {number} k - The number of top results to return.
-   * @param {Function} [filter] - An optional filter function to filter documents.
-   * @returns {Promise<Array>} A promise that resolves to an array of tuples containing a Document and its similarity score.
-   */
-  async similaritySearchVectorWithScore(query, k, filter) {
-    const filterFunction = (memoryVector) => {
-      if (!filter) {
-        return true;
+  async similaritySearchVectorWithScore(queryVector, k, filter) {
+    try {
+      if (this.useDatabase) {
+        const allEmbeddings = await EmbeddingModel.find();
+        const filterFunction = (embeddingDoc) => {
+          if (!filter) {
+            return true;
+          }
+          const doc = new Document({
+            metadata: embeddingDoc.metadata,
+            pageContent: embeddingDoc.content,
+          });
+          return filter(doc);
+        };
+
+        const filteredEmbeddings = allEmbeddings.filter(filterFunction);
+        const searches = filteredEmbeddings
+          .map((embeddingDoc, index) => ({
+            similarity: ml_distance_similarity.cosine(queryVector, embeddingDoc.embedding),
+            index,
+          }))
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, k);
+
+        return searches.map((search) => [
+          new Document({
+            metadata: filteredEmbeddings[search.index].metadata,
+            pageContent: filteredEmbeddings[search.index].content,
+          }),
+          search.similarity,
+        ]);
+      } else {
+        const embeddings = this.memoryVectors
+          .map((embedding) => ({
+            content: embedding.content,
+            embedding: embedding.embedding,
+          }));
+        const searches = embeddings
+          .map((embedding, index) => ({
+            similarity: ml_distance_similarity.cosine(queryVector, embedding.embedding),
+            index,
+          }))
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, k);
+
+        return searches.map((search) => [
+          new Document({
+            metadata: embeddings[search.index].metadata,
+            pageContent: embeddings[search.index].content,
+          }),
+          search.similarity,
+        ]);
       }
-      const doc = new Document({
-        metadata: memoryVector.metadata,
-        pageContent: memoryVector.content,
-      });
-      return filter(doc);
-    };
-
-    const filteredMemoryVectors = this.memoryVectors.filter(filterFunction);
-    const searches = filteredMemoryVectors
-      .map((vector, index) => ({
-        similarity: ml_distance_similarity.cosine(query, vector.embedding),
-        index,
-      }))
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, k);
-
-    return searches.map((search) => [
-      new Document({
-        metadata: filteredMemoryVectors[search.index].metadata,
-        pageContent: filteredMemoryVectors[search.index].content,
-      }),
-      search.similarity,
-    ]);
+    } catch (error) {
+      console.error("Error during similarity search:", error);
+      return [];
+    }
   }
 
-  /**
-   * Creates an instance of CustomVectorStore from an array of texts.
-   * @param {string[]} texts - An array of strings representing the texts.
-   * @param {object[] | object} metadatas - An array of metadata objects or a single metadata object.
-   * @param {EmbeddingsInterface} embeddings - An instance of EmbeddingsInterface to embed the texts.
-   * @param {CustomVectorStoreArgs} [dbConfig] - Optional configuration for the CustomVectorStore.
-   * @returns {Promise<CustomVectorStore>} A promise that resolves to an instance of CustomVectorStore.
-   */
-  static async fromTexts(texts, metadatas, embeddings, dbConfig) {
+  static async fromTexts(texts, metadatas, embeddings, useDatabase, dbUri) {
     const docs = texts.map((text, i) => {
       const metadata = Array.isArray(metadatas) ? metadatas[i] : metadatas;
       return new Document({
@@ -97,24 +145,22 @@ class CustomVectorStore extends VectorStore {
       });
     });
 
-    return this.fromDocuments(docs, embeddings, dbConfig);
+    return this.fromDocuments(docs, embeddings, useDatabase, dbUri);
   }
 
-  /**
-   * Creates an instance of CustomVectorStore from an array of documents.
-   * @param {Document[]} docs - An array of Document objects.
-   * @param {EmbeddingsInterface} embeddings - An instance of EmbeddingsInterface to embed the documents.
-   * @param {CustomVectorStoreArgs} [dbConfig] - Optional configuration for the CustomVectorStore.
-   * @returns {Promise<CustomVectorStore>} A promise that resolves to an instance of CustomVectorStore.
-   */
-  static async fromDocuments(docs, embeddings, dbConfig) {
-    const instance = new this(embeddings, dbConfig);
+  static async fromDocuments(docs, embeddings, useDatabase, dbUri) {
+    const instance = new this(embeddings, {}, useDatabase, dbUri);
     try {
       await instance.addDocuments(docs);
     } catch (error) {
       console.error("Error adding documents:", error);
     }
     return instance;
+  }
+
+  async getQueryVector(query) {
+    const [newEmbedding] = await this.embeddings.embedDocuments([query]);
+    return newEmbedding;
   }
 }
 

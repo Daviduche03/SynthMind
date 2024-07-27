@@ -16,7 +16,7 @@ const defaultTools = () => ({
     web: async (query) => {
         const webSearch = new TavilySearchResults({
             maxResults: 1,
-            apiKey: "",
+            apiKey: "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",
         });
         return await webSearch._call(query);
     },
@@ -29,6 +29,8 @@ const createTool = ({ tool_name, description, parameters, tool_function }) => ({
     parameters,
     tool_function,
 });
+
+
 
 const createTools = () => [
     createTool({

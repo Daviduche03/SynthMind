@@ -10,13 +10,17 @@ const embeddingSchema = new mongoose.Schema({
   metadata: mongoose.Schema.Types.Mixed,
 });
 
-const EmbeddingModel = mongoose.model('Embedding', embeddingSchema);
+let connection;
+let EmbeddingModel;
 
 class CustomVectorStore extends VectorStore {
   constructor(embeddings, fields = {}, dbUri) {
     super(embeddings, fields);
     this.dbUri = dbUri;
-    mongoose.connect(this.dbUri);
+    this.connection = mongoose.createConnection(this.dbUri);
+
+    EmbeddingModel = this.connection.model('Embedding', embeddingSchema);
+
   }
 
   _vectorstoreType() {
@@ -28,6 +32,7 @@ class CustomVectorStore extends VectorStore {
    * @param {Document[]} documents - An array of Document objects to be added.
    */
   async addDocuments(documents) {
+    console.log(documents);
     const texts = documents.map(({ pageContent }) => pageContent);
     try {
       const existingEmbeddings = await this.getEmbeddingsByTexts(texts);
@@ -75,6 +80,7 @@ class CustomVectorStore extends VectorStore {
    * @returns {Promise<(number[] | null)[]>} - An array of embeddings or null if not found.
    */
   async getEmbeddingsByTexts(texts) {
+    console.log(texts);
     const embeddings = await EmbeddingModel.find({ content: { $in: texts } });
     const embeddingMap = embeddings.reduce((acc, emb) => {
       acc[emb.content] = emb.embedding;
